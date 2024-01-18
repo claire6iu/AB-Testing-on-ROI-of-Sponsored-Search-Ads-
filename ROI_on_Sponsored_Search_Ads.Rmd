@@ -1,0 +1,123 @@
+---
+title: "Measuring ROI on Sponsored Search Ads - Bazzar.com"
+author: "Ssu Hsien Lee, Tsu Jung Liu"
+date: "2023-11-10"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(plm)
+library(ggplot2)
+df = read.csv("did_sponsored_ads.csv")
+```
+
+# Business Problem Overview
+
+Bazaar, the leading online retailer in the United States, employs a dual strategy involving the display of advertisements and the use of search engine advertising, running paid search ads on both Google and Bing. Bazaar classifies its ads into two broad categories based on keywords: Branded and Nonbranded. Branded keywords include terms such as "Bazaar," "Bazaar shoes," and "Bazaar guitar," while Nonbranded keywords include terms like "shoes" and "guitar" without containing the Bazaar brand name.
+
+To evaluate the assess the efficacy of these ads, Bob, a colleague in the data analytics team at Bazaar, calculated the Return on Investment (ROI) metric. However, the reported ROI was exceptionally high at 320%, leading Myra, another colleague, to express skepticism about this figure. To comprehensively understand the causal relationship between sponsored ads and their effectiveness, we will leverage the available data to address the following questions:
+
+1. What is Wrong with Bob’s ROI Calculation?
+2. Define the Treatment and Control
+3. Consider a First Difference Estimate.
+4. Calculate the Difference-in-Differences.
+5. Given the Treatment Effect Estimate, Fix Bob’s ROI Calculation.
+
+# Experiment
+
+To examine the impact of sponsored ads, we will employ the difference-in-differences technique to estimate the causal effect observed before and after implementing the treatment.
+
+## Data pre-processing 
+
+We start by classifying the data into treatment and control groups, add pre-post indicator for weeks before and after the sponsored search ads are stopped, and combining web traffic from both organic and sponsored search ads.
+
+```{r}
+df <- df %>% mutate(total_traffic = avg_spons + avg_org,
+                    treatment = ifelse(platform == "goog", 1, 0),
+                    after = ifelse(week %in% c(10, 11, 12), 1, 0))
+```
+
+# (a) What's wrong with Bob's ROI Calculation?
+
+ROI is a valuable metric for evaluating the effectiveness and profitability of an investment. In this context, we can use ROI to inform decisions about the viability of displaying ads on Google and Bing as a strategic approach. However, it's essential to approach the calculation and the figures used for ROI with caution to prevent drawing misleading conclusions.
+
+In the article, Bob reported a 320% ROI. If this figure is accurate, it suggests that sponsoring ads on Google and Bing constitutes a highly successful investment. However, it's important to note that such exceptionally high ROI numbers are not typical. Therefore, it's crucial to thoroughly understand the approach Bob used to calculate this figure.
+
+Let's first recall how Bob got 320% ROI:
+```{r}
+ROI = (0.12*21-0.6) / 0.6 
+ROI
+```
+
+The error in the calculation stems from an oversight in the conversion rate, specifically the lack of differentiation. Bob's calculation assumed that all website visitors making purchases did so through the ad links. However, this assumption overlooked the fact that some customers actually arrived via organic clicks. In other words, failing to distinguish the source of customers can result in an overestimation of the ROI.
+
+For instance, if only 30% of customers were genuinely attracted by the ads and clicked through the link, the accurate calculation of ROI would be as follows. Factoring in the actual conversion rate in this scenario, the ROI decreases to 26%, a significant deviation from the initially reported extreme figure of 320%.
+
+```{r}
+ROI_fixed = (0.12*21*0.3-0.6) / 0.6 
+ROI_fixed
+```
+
+# (b) Define the Treatment and Control
+
+To establish a causal relationship between sponsored ads and their effectiveness, it is crucial to define our treatment and control groups:
+
+Treatment: The treatment group comprises the last three weeks (9, 10, 11) of Google sponsored search ads. This is define as the treatment period because there was no sponsorship for Google ads during these three weeks.
+
+Control: The control group consists of Bing, Yahoo, and Ask. Bazaar continued sponsoring all ads on these three platforms during the last three weeks, making them the control group for comparison.
+
+# (c) Consider a First Difference Estimate
+
+```{r}
+summary(lm(total_traffic ~ after, data=filter(df, platform == "goog")))
+```
+We run a regression with 'total traffic' regressed on 'after'. The findings reveal an average web traffic decrease of 1846 after discontinuing sponsored search ads, reflecting a 22% reduction in weekly total traffic. However, this approach is not suitable because it assumes that the total traffic remains stable over time, not influenced by factors like changes in user behavior or economic conditions. This assumption can introduce potential confounding factors, compromising the accurate measurement of causal effects.
+
+# (d) Calculate the Difference-in-Differences.
+Before proceeding with the difference-in-differences analysis, it is essential to validate the parallel trends assumption and argue the SUTVA assumption. 
+
+1. SUTVA Assumption: The SUTVA is not violated since the treatment is specific to the treated unit and does not spill over to influence the outcomes of other units. In addition, the effect of the treatment is constant over the entire study period.
+
+2. Parallel Trends Assumption: According to this assumption, the treatment and control groups should exhibit parallel patterns during the pre-treatment week (the week before Week9). 
+
+```{r}
+control = df %>%
+  group_by(week) %>%
+  filter(platform %in% c('bing', 'yahoo', 'ask')) %>%
+  summarize(total_traffic = sum(total_traffic)) %>%
+  ungroup()
+treatment = df %>% filter(platform %in% c('goog')) %>% select(week, total_traffic)
+
+ggplot(control,aes(x = week, y = total_traffic , color = 'Control')) +
+  geom_line() +
+  geom_line(aes(x = week, y = total_traffic , color = 'Treatment'), data = treatment) +
+  geom_vline(xintercept = 9 , linetype = 'dotted',color = 'red') +
+  scale_x_continuous(breaks = seq(1, 12, by = 1)) + 
+  theme_bw()
+```
+From the chart above, it appears that the trends from Week1 to Week9 are relatively parallel, indicating that the parallel trends assumption is not being violated.
+
+```{r}
+summary(lm(total_traffic ~ treatment*factor(week), data = df))
+```
+
+From the parallel trend analysis above, the p-value of the interaction terms before the treatment (week 1 to week 9) are all not statistically significant and further support the parallel trends assumption. Therefore, we can proceed to conduct difference-in-differences analysis.
+
+# Difference-in-Differences Analysis
+```{r}
+summary(lm(total_traffic ~ treatment*after , data = df))
+```
+The p-value is statistically significant and indicates that the average total traffic declined by 9910.6 without the sponsored search ads. This means that Google search ads are indeed helpful in introducing more web traffic. Compared with the first difference analysis, this approach is more robust as it compares the changes within each platform and considers the changes over time.
+
+# (e) Given the Treatment Effect Estimate, Fix Bob’s ROI Calculation
+
+The primary error in Bob’s ROI calculation lies in the omission of customers who might enter the website via organic clicks. To modify this, we need to calculate the true conversion rate from sponsored ads links. According to the results from the Difference-in-Differences analysis, the total traffic decreased by 9910, indicating that sponsored ads can introduce 9910 traffic. Additionally, we conducted a linear regression to estimate the traffic from organic clicks, and the result was 2293.
+
+```{r}
+summary(lm(avg_org ~ treatment*after , data = df))
+conversion_rate = 9910 / (9910 + 2293)
+New_ROI = (0.12*21*conversion_rate-0.6) / 0.6 
+New_ROI
+```
+The new ROI is 240%.
